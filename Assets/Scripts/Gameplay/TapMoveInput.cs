@@ -3,97 +3,99 @@ using UnityEngine;
 
 namespace Gameplay
 {
+    /// <summary>
+    /// Обрабатывает тап по земле — двигает игрока к точке клика.
+    /// Тапы по врагам и интерактивным объектам передаются TargetSelectionInput.
+    /// </summary>
     public sealed class TapMoveInput : MonoBehaviour
     {
         [SerializeField] private Camera worldCamera;
-        [SerializeField] private LayerMask blockedLayerMask;
         [SerializeField] private Transform playerTransform;
         [SerializeField] private MoveTargetComponent moveTarget;
         [SerializeField] private TargetComponent playerTarget;
 
         private TapMoveCommandService _commandService;
-        private TargetSelectionRaycaster _targetRaycaster;
-        private readonly TargetSelectionView[] _blockedViews = new TargetSelectionView[8];
 
         private void Awake()
         {
             if (worldCamera == null)
-            {
                 worldCamera = Camera.main;
-            }
 
             if (playerTransform == null && moveTarget != null)
-            {
                 playerTransform = moveTarget.transform;
-            }
 
             _commandService = new TapMoveCommandService(moveTarget, playerTarget);
-            _targetRaycaster = new TargetSelectionRaycaster(worldCamera, blockedLayerMask);
         }
 
         private void Update()
         {
-            if (worldCamera == null || _commandService == null)
-            {
-                return;
-            }
+            if (worldCamera == null || _commandService == null) return;
+            if (!PointerInputUtility.TryGetPointerDownPosition(out var screenPosition)) return;
 
-            if (!PointerInputUtility.TryGetPointerDownPosition(out var screenPosition))
-            {
-                return;
-            }
+            // Если тап по врагу или интерактивному объекту — не обрабатываем
+            if (HitInteractiveTarget(screenPosition)) return;
 
-            if (HasBlockedTarget(screenPosition))
-            {
-                return;
-            }
-
-            if (!TryGetWorldPosition(screenPosition, out var worldPosition))
-            {
-                return;
-            }
+            // Вычислить точку на земле
+            if (!TryGetGroundPosition(screenPosition, out var worldPosition)) return;
 
             _commandService.SetDestination(worldPosition);
         }
 
-        private bool HasBlockedTarget(Vector2 screenPosition)
+        private bool HitInteractiveTarget(Vector2 screenPosition)
         {
-            if (blockedLayerMask.value == 0)
-            {
-                return false;
-            }
+            var ray = worldCamera.ScreenPointToRay(screenPosition);
+            var hits = Physics.RaycastAll(ray, float.MaxValue);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
 
-            var hitCount = _targetRaycaster.Raycast(screenPosition, _blockedViews);
-            for (var i = 0; i < hitCount; i++)
+            foreach (var hit in hits)
             {
-                if (_blockedViews[i] != null)
-                {
+                if (hit.collider == null) continue;
+
+                var tsv = hit.collider.GetComponent<TargetSelectionView>();
+                if (tsv == null)
+                    tsv = hit.collider.GetComponentInParent<TargetSelectionView>();
+
+                if (tsv == null) continue;
+
+                var identity = tsv.EntityIdentity;
+                if (identity == null) continue;
+
+                if (identity.IsEnemy || identity.IsInteractiveObject)
                     return true;
-                }
+
+                if (identity.IsPlayer)
+                    continue;
+
+                if (!tsv.AllowClickThrough)
+                    return true;
             }
 
             return false;
         }
 
-        private bool TryGetWorldPosition(Vector2 screenPosition, out Vector3 worldPosition)
+        private bool TryGetGroundPosition(Vector2 screenPosition, out Vector3 worldPosition)
         {
-            if (worldCamera == null || playerTransform == null)
+            if (worldCamera == null)
             {
                 worldPosition = default;
                 return false;
             }
 
             var ray = worldCamera.ScreenPointToRay(screenPosition);
-            var movePlane = new Plane(Vector3.up, new Vector3(0f, playerTransform.position.y, 0f));
-            if (!movePlane.Raycast(ray, out var distance))
+            float groundY = playerTransform != null ? playerTransform.position.y : 0f;
+
+            // Математическая горизонтальная плоскость на высоте игрока
+            var movePlane = new Plane(Vector3.up, new Vector3(0f, groundY, 0f));
+
+            if (movePlane.Raycast(ray, out var distance) && distance > 0f)
             {
-                worldPosition = default;
-                return false;
+                worldPosition = ray.GetPoint(distance);
+                worldPosition.y = groundY;
+                return true;
             }
 
-            worldPosition = ray.GetPoint(distance);
-            worldPosition.y = playerTransform.position.y;
-            return true;
+            worldPosition = default;
+            return false;
         }
     }
 }

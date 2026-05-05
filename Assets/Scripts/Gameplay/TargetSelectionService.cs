@@ -1,3 +1,5 @@
+using UnityEngine;
+
 namespace Gameplay
 {
     public sealed class TargetSelectionService
@@ -22,30 +24,31 @@ namespace Gameplay
         public bool TrySelect(EntityIdentity candidate)
         {
             if (_playerIdentity == null || _playerTarget == null || candidate == null)
-            {
                 return false;
-            }
 
-            if (candidate == _playerIdentity || candidate.IsPlayer || !candidate.IsEnemy)
-            {
+            // Нельзя выбрать самого себя или другого игрока
+            if (candidate == _playerIdentity || candidate.IsPlayer)
                 return false;
-            }
+
+            // Принимаем врагов и интерактивные объекты (сундуки)
+            if (!candidate.IsEnemy && !candidate.IsInteractiveObject)
+                return false;
 
             if (candidate.TryGetComponent<RemovalRequestComponent>(out var removalRequest) && removalRequest.IsRequested)
-            {
                 return false;
-            }
 
             if (candidate.TryGetComponent<VisibilityComponent>(out var visibility) && visibility.IsHidden)
-            {
                 return false;
-            }
 
             _playerTarget.Set(candidate);
 
-            if (_moveTarget != null && _approachPositionService != null && _approachPositionService.TryGetApproachPosition(candidate, out var destination))
+            // Двигаться к цели
+            if (_moveTarget != null && _approachPositionService != null)
             {
-                _moveTarget.SetDestination(destination);
+                if (_approachPositionService.TryGetApproachPosition(candidate, out var destination))
+                    _moveTarget.SetDestination(destination);
+                else
+                    _moveTarget.SetDestination(candidate.transform.position);
             }
 
             return true;
